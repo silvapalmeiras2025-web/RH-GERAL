@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  @apply bg-slate-50 text-slate-950 font-sans antialiased;
+}
+
+/* Custom High Density Global overrides for form fields */
+input, select, textarea {
+  font-size: 0.75rem !important; /* 12px for high-density crisp control */
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+  padding-left: 0.65rem !important;
+  padding-right: 0.65rem !important;
+  border-radius: 0.375rem !important; /* rounded-md */
+}
+
+/* Compact form label elements */
+label {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Scrollbar tuning for ultra dense views */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

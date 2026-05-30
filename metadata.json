@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Movimentação de Pessoal",
+  "description": "Sistema interno para alimentação e consolidação de movimentação de pessoal em cumprimento ao Decreto Municipal nº 409/2026 da Prefeitura de Rosário - MA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
