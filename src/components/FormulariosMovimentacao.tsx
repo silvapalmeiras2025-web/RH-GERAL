@@ -4,12 +4,13 @@
  */
 
 import React, { useState } from 'react';
-import { Secretaria, VinculoType, RecordType } from '../types';
+import { Secretaria, VinculoType, RecordType, LocalTrabalho, TIPOS_AFASTAMENTO, LISTA_STATUS_PERMUTA, StatusPermuta, LISTA_SECRETARIAS } from '../types';
 
 interface FormProps {
-  secretaria: string;
+  secretaria: Secretaria;
   activeQuadro: RecordType;
   isForaDoPrazo: boolean;
+  locaisTrabalho: LocalTrabalho[];
   onSuccess: (message: string, record: any) => void;
   onError: (err: string) => void;
 }
@@ -27,10 +28,22 @@ export default function FormulariosMovimentacao({
   secretaria,
   activeQuadro,
   isForaDoPrazo,
+  locaisTrabalho,
   onSuccess,
   onError
 }: FormProps) {
   const [submitting, setSubmitting] = useState(false);
+
+  // Locais de Trabalho ativos da secretaria corrente, usados nos seletores de Lotação/Afastamento/Frequência
+  const locaisDaSecretaria = locaisTrabalho
+    .filter((l) => l.secretaria === secretaria && l.ativo)
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+
+  // Todos os locais ativos, agrupados por secretaria, usados na Lotação (pode envolver transferência entre secretarias)
+  const locaisPorSecretaria = LISTA_SECRETARIAS.map((sec) => ({
+    secretaria: sec,
+    locais: locaisTrabalho.filter((l) => l.secretaria === sec && l.ativo).sort((a, b) => a.nome.localeCompare(b.nome))
+  }));
 
   // Core identifiers common across all forms
   const [matricula, setMatricula] = useState('');
@@ -50,8 +63,9 @@ export default function FormulariosMovimentacao({
   const [motivoDesligamento, setMotivoDesligamento] = useState('');
   const [portariaDesligamento, setPortariaDesligamento] = useState('');
 
-  // Faltas (3)
+  // Faltas / Afastamentos (3)
   const [tipoOcorrencia, setTipoOcorrencia] = useState('Falta Injustificada');
+  const [localTrabalhoFaltaId, setLocalTrabalhoFaltaId] = useState('');
   const [dataInicioFalta, setDataInicioFalta] = useState('');
   const [dataTerminoFalta, setDataTerminoFalta] = useState('');
   const [quantidadeDias, setQuantidadeDias] = useState('');
@@ -68,8 +82,8 @@ export default function FormulariosMovimentacao({
   const [adiantamento13, setAdiantamento13] = useState('Não');
 
   // Lotações (5)
-  const [lotacaoAnterior, setLotacaoAnterior] = useState('');
-  const [novaLotacao, setNovaLotacao] = useState('');
+  const [lotacaoAnteriorId, setLotacaoAnteriorId] = useState('');
+  const [novaLotacaoId, setNovaLotacaoId] = useState('');
   const [cargoAtual, setCargoAtual] = useState('');
   const [novoCargo, setNovoCargo] = useState('');
   const [dataVigenciaLotacao, setDataVigenciaLotacao] = useState('');
@@ -99,6 +113,31 @@ export default function FormulariosMovimentacao({
   const [baseLegalGratificacao, setBaseLegalGratificacao] = useState('');
   const [motivoGratificacao, setMotivoGratificacao] = useState('');
 
+  // Permutas (9) — troca de Local de Trabalho entre dois servidores
+  const [servidorAMatricula, setServidorAMatricula] = useState('');
+  const [servidorANome, setServidorANome] = useState('');
+  const [servidorAVinculo, setServidorAVinculo] = useState<VinculoType>('Efetivo');
+  const [localAId, setLocalAId] = useState('');
+  const [servidorBMatricula, setServidorBMatricula] = useState('');
+  const [servidorBNome, setServidorBNome] = useState('');
+  const [servidorBVinculo, setServidorBVinculo] = useState<VinculoType>('Efetivo');
+  const [localBId, setLocalBId] = useState('');
+  const [dataSolicitacaoPermuta, setDataSolicitacaoPermuta] = useState('');
+  const [dataEfetivacaoPermuta, setDataEfetivacaoPermuta] = useState('');
+  const [statusPermuta, setStatusPermuta] = useState<StatusPermuta>('Solicitada');
+  const [motivoPermuta, setMotivoPermuta] = useState('');
+  const [portariaPermuta, setPortariaPermuta] = useState('');
+
+  // Controle de Frequência (10)
+  const [localTrabalhoFreqId, setLocalTrabalhoFreqId] = useState('');
+  const [competenciaFreq, setCompetenciaFreq] = useState('');
+  const [diasUteisFreq, setDiasUteisFreq] = useState('');
+  const [diasTrabalhadosFreq, setDiasTrabalhadosFreq] = useState('');
+  const [faltasFreq, setFaltasFreq] = useState('0');
+  const [atestadosFreq, setAtestadosFreq] = useState('0');
+  const [atrasosFreq, setAtrasosFreq] = useState('0');
+  const [observacoesFreq, setObservacoesFreq] = useState('');
+
   // Handle common fields reset
   const resetCommon = () => {
     setMatricula('');
@@ -119,7 +158,7 @@ export default function FormulariosMovimentacao({
       return;
     }
 
-    if (!matricula.trim() || !nomeCompleto.trim()) {
+    if (activeQuadro !== 'permutas' && (!matricula.trim() || !nomeCompleto.trim())) {
       onError('Matrícula e Nome Completo são campos obrigatórios para qualquer registro.');
       return;
     }
@@ -128,12 +167,14 @@ export default function FormulariosMovimentacao({
 
     try {
       // Build request body according to current layout
-      let recordBody: any = {
-        secretaria,
-        matricula: matricula.trim(),
-        nomeCompleto: nomeCompleto.trim(),
-        vinculo
-      };
+      let recordBody: any = activeQuadro === 'permutas'
+        ? { secretaria }
+        : {
+            secretaria,
+            matricula: matricula.trim(),
+            nomeCompleto: nomeCompleto.trim(),
+            vinculo
+          };
 
       // Gather form specific fields
       switch (activeQuadro) {
@@ -166,13 +207,16 @@ export default function FormulariosMovimentacao({
           };
           break;
 
-        case 'faltas':
+        case 'faltas': {
           if (!dataInicioFalta || !quantidadeDias) {
             throw new Error('Preencha a Data de Início e a estimativa de dias de afastamento.');
           }
+          const localFalta = locaisDaSecretaria.find((l) => l.id === localTrabalhoFaltaId);
           recordBody = {
             ...recordBody,
             tipoOcorrencia,
+            localTrabalhoId: localTrabalhoFaltaId || undefined,
+            localTrabalho: localFalta?.nome || '',
             dataInicio: dataInicioFalta,
             dataTermino: dataTerminoFalta,
             quantidadeDias: parseFloat(quantidadeDias) || 1,
@@ -181,6 +225,7 @@ export default function FormulariosMovimentacao({
             descontar: descontar === 'Sim'
           };
           break;
+        }
 
         case 'ferias':
           if (!periodoAquisitivo.trim() || !dataInicioFerias || !diasGozo) {
@@ -197,20 +242,29 @@ export default function FormulariosMovimentacao({
           };
           break;
 
-        case 'lotacoes':
-          if (!lotacaoAnterior.trim() || !novaLotacao.trim() || !dataVigenciaLotacao) {
-            throw new Error('Informe o local anterior, o novo destino físico e a data de eficácia da lotação.');
+        case 'lotacoes': {
+          if (!lotacaoAnteriorId || !novaLotacaoId || !dataVigenciaLotacao) {
+            throw new Error('Selecione o Local de Trabalho anterior, o novo destino e a data de eficácia da lotação.');
+          }
+          const todosLocais = locaisPorSecretaria.flatMap((g) => g.locais);
+          const localAnterior = todosLocais.find((l) => l.id === lotacaoAnteriorId);
+          const localNovo = todosLocais.find((l) => l.id === novaLotacaoId);
+          if (lotacaoAnteriorId === novaLotacaoId) {
+            throw new Error('O Local de Trabalho anterior e o novo destino não podem ser o mesmo.');
           }
           recordBody = {
             ...recordBody,
-            lotacaoAnterior: lotacaoAnterior.trim(),
-            novaLotacao: novaLotacao.trim(),
+            lotacaoAnteriorId,
+            lotacaoAnterior: localAnterior?.nome || '',
+            novaLotacaoId,
+            novaLotacao: localNovo?.nome || '',
             cargoAtual: cargoAtual.trim(),
             novoCargo: novoCargo.trim(),
             dataVigencia: dataVigenciaLotacao,
             portaria: portariaLotacao.trim()
           };
           break;
+        }
 
         case 'horasExtras':
           if (!competenciaHE.trim() || (!he50 && !he100 && !horasNoturnas)) {
@@ -257,6 +311,59 @@ export default function FormulariosMovimentacao({
           };
           break;
 
+        case 'permutas': {
+          if (!servidorAMatricula.trim() || !servidorANome.trim() || !servidorBMatricula.trim() || !servidorBNome.trim() || !localAId || !localBId || !dataSolicitacaoPermuta) {
+            throw new Error('Preencha a matrícula, o nome e o Local de Trabalho de ambos os servidores, além da data de solicitação.');
+          }
+          if (localAId === localBId) {
+            throw new Error('Os dois servidores devem estar lotados em Locais de Trabalho diferentes para haver permuta.');
+          }
+          const todosLocaisPermuta = locaisPorSecretaria.flatMap((g) => g.locais);
+          const localA = todosLocaisPermuta.find((l) => l.id === localAId);
+          const localB = todosLocaisPermuta.find((l) => l.id === localBId);
+          recordBody = {
+            ...recordBody,
+            matricula: servidorAMatricula.trim(),
+            nomeCompleto: `${servidorANome.trim()} ↔ ${servidorBNome.trim()}`,
+            servidorAMatricula: servidorAMatricula.trim(),
+            servidorANome: servidorANome.trim(),
+            servidorAVinculo,
+            localAId,
+            localA: localA?.nome || '',
+            servidorBMatricula: servidorBMatricula.trim(),
+            servidorBNome: servidorBNome.trim(),
+            servidorBVinculo,
+            localBId,
+            localB: localB?.nome || '',
+            dataSolicitacao: dataSolicitacaoPermuta,
+            dataEfetivacao: dataEfetivacaoPermuta,
+            status: statusPermuta,
+            motivo: motivoPermuta.trim(),
+            portaria: portariaPermuta.trim()
+          };
+          break;
+        }
+
+        case 'frequencias': {
+          if (!competenciaFreq.trim() || !diasUteisFreq || !diasTrabalhadosFreq) {
+            throw new Error('Informe a Competência (Mês/Ano), os Dias Úteis do mês e os Dias Efetivamente Trabalhados.');
+          }
+          const localFreq = locaisDaSecretaria.find((l) => l.id === localTrabalhoFreqId);
+          recordBody = {
+            ...recordBody,
+            localTrabalhoId: localTrabalhoFreqId || undefined,
+            localTrabalho: localFreq?.nome || '',
+            competencia: competenciaFreq.trim(),
+            diasUteis: parseInt(diasUteisFreq, 10) || 0,
+            diasTrabalhados: parseInt(diasTrabalhadosFreq, 10) || 0,
+            faltas: parseInt(faltasFreq, 10) || 0,
+            atestados: parseInt(atestadosFreq, 10) || 0,
+            atrasos: parseInt(atrasosFreq, 10) || 0,
+            observacoes: observacoesFreq.trim()
+          };
+          break;
+        }
+
         default:
           throw new Error('Quadro regulamentar inválido.');
       }
@@ -294,6 +401,7 @@ export default function FormulariosMovimentacao({
       setDataDesligamento('');
       setMotivoDesligamento('');
       setPortariaDesligamento('');
+      setLocalTrabalhoFaltaId('');
       setDataInicioFalta('');
       setDataTerminoFalta('');
       setQuantidadeDias('');
@@ -301,8 +409,8 @@ export default function FormulariosMovimentacao({
       setPeriodoAquisitivo('');
       setDataInicioFerias('');
       setDataTerminoFerias('');
-      setLotacaoAnterior('');
-      setNovaLotacao('');
+      setLotacaoAnteriorId('');
+      setNovaLotacaoId('');
       setCargoAtual('');
       setNovoCargo('');
       setDataVigenciaLotacao('');
@@ -322,6 +430,27 @@ export default function FormulariosMovimentacao({
       setDataInicioGratificacao('');
       setBaseLegalGratificacao('');
       setMotivoGratificacao('');
+      setServidorAMatricula('');
+      setServidorANome('');
+      setServidorAVinculo('Efetivo');
+      setLocalAId('');
+      setServidorBMatricula('');
+      setServidorBNome('');
+      setServidorBVinculo('Efetivo');
+      setLocalBId('');
+      setDataSolicitacaoPermuta('');
+      setDataEfetivacaoPermuta('');
+      setStatusPermuta('Solicitada');
+      setMotivoPermuta('');
+      setPortariaPermuta('');
+      setLocalTrabalhoFreqId('');
+      setCompetenciaFreq('');
+      setDiasUteisFreq('');
+      setDiasTrabalhadosFreq('');
+      setFaltasFreq('0');
+      setAtestadosFreq('0');
+      setAtrasosFreq('0');
+      setObservacoesFreq('');
 
     } catch (err: any) {
       onError(err.message || 'Erro inesperado. Verifique os campos e tente novamente.');
@@ -340,12 +469,14 @@ export default function FormulariosMovimentacao({
         <h3 className="font-sans text-lg font-medium text-slate-800">
           Alimentação de Dados — {activeQuadro === 'admissoes' ? 'Quadro 1: Admissões' :
                                   activeQuadro === 'demissoes' ? 'Quadro 2: Demissões e Exonerações' :
-                                  activeQuadro === 'faltas' ? 'Quadro 3: Faltas e Afastamentos' :
+                                  activeQuadro === 'faltas' ? 'Quadro 3: Afastamentos' :
                                   activeQuadro === 'ferias' ? 'Quadro 4: Férias do Servidor' :
-                                  activeQuadro === 'lotacoes' ? 'Quadro 5: Mudanças de Lotação' :
+                                  activeQuadro === 'lotacoes' ? 'Quadro 5: Lotação' :
                                   activeQuadro === 'horasExtras' ? 'Quadro 6: Horas Extras e Adic.' :
                                   activeQuadro === 'ajudasCusto' ? 'Quadro 7: Ajuda de Custo e Diárias' :
-                                  'Quadro 8: Gratificações e Prêmios'}
+                                  activeQuadro === 'gratificacoes' ? 'Quadro 8: Gratificações e Prêmios' :
+                                  activeQuadro === 'permutas' ? 'Quadro 9: Permutas de Local de Trabalho' :
+                                  'Quadro 10: Controle de Frequência'}
         </h3>
         <p className="text-xs text-slate-500 mt-1">
           A secretaria de origem ({secretaria || 'Não selecionada'}) responderá legalmente pela veracidade dos dados perante o Controle Interno.
@@ -371,7 +502,8 @@ export default function FormulariosMovimentacao({
         </div>
       )}
 
-      {/* Grid: Common Server Identification Section */}
+      {/* Grid: Common Server Identification Section (não se aplica à Permuta, que envolve dois servidores) */}
+      {activeQuadro !== 'permutas' && (
       <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-100 space-y-4">
         <h4 className="font-mono text-xs font-bold text-slate-500 tracking-wider">DADOS DE IDENTIFICAÇÃO DO SERVIDOR</h4>
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
@@ -427,6 +559,7 @@ export default function FormulariosMovimentacao({
           </div>
         </div>
       </div>
+      )}
 
       {/* Specific Fields per activeQuadro Selection */}
       <div className="space-y-4">
@@ -559,12 +692,23 @@ export default function FormulariosMovimentacao({
                 onChange={(e) => setTipoOcorrencia(e.target.value)}
                 className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
               >
-                <option value="Falta Injustificada">Falta Injustificada</option>
-                <option value="Afastamento Médico (Atestado)">Afastamento Médico (Atestado)</option>
-                <option value="Licença para Tratamento de Saúde">Licença para Tratamento de Saúde</option>
-                <option value="Licença Maternidade/Paternidade">Licença Maternidade/Paternidade</option>
-                <option value="Licença por Motivo de Casamento">Licença por Motivo de Casamento</option>
-                <option value="Afastamento Legislativo/Mandatário">Afastamento Legislativo/Mandatário</option>
+                {TIPOS_AFASTAMENTO.map((tipo) => (
+                  <option key={tipo} value={tipo}>{tipo}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label id="lbl-local-falta" className="block text-xs font-semibold text-slate-700 mb-1">Local de Trabalho</label>
+              <select
+                id="sel-local-falta"
+                value={localTrabalhoFaltaId}
+                onChange={(e) => setLocalTrabalhoFaltaId(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              >
+                <option value="">-- Não informado --</option>
+                {locaisDaSecretaria.map((l) => (
+                  <option key={l.id} value={l.id}>{l.nome}</option>
+                ))}
               </select>
             </div>
             <div className="md:col-span-2">
@@ -718,28 +862,47 @@ export default function FormulariosMovimentacao({
         {activeQuadro === 'lotacoes' && (
           <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div className="md:col-span-3">
-              <label id="lbl-lot-ant" className="block text-xs font-semibold text-slate-700 mb-1">Lotação (Setor/Escola) Anterior <span className="text-rose-500">*</span></label>
-              <input
-                id="inp-lot-ant"
-                type="text"
-                placeholder="Ex: Posto de Saúde Centro"
+              <label id="lbl-lot-ant" className="block text-xs font-semibold text-slate-700 mb-1">Local de Trabalho Anterior <span className="text-rose-500">*</span></label>
+              <select
+                id="sel-lot-ant"
                 required
-                value={lotacaoAnterior}
-                onChange={(e) => setLotacaoAnterior(e.target.value)}
+                value={lotacaoAnteriorId}
+                onChange={(e) => setLotacaoAnteriorId(e.target.value)}
                 className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
-              />
+              >
+                <option value="">-- Selecione o Local de Trabalho --</option>
+                {locaisPorSecretaria.map((grupo) => (
+                  <optgroup key={grupo.secretaria} label={`SECRETARIA DE ${grupo.secretaria}`}>
+                    {grupo.locais.map((l) => (
+                      <option key={l.id} value={l.id}>{l.nome}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
             </div>
             <div className="md:col-span-3">
-              <label id="lbl-lot-nova" className="block text-xs font-semibold text-slate-700 mb-1">Nova Lotação Destino <span className="text-rose-500">*</span></label>
-              <input
-                id="inp-lot-nova"
-                type="text"
-                placeholder="Ex: Hospital Municipal Central"
+              <label id="lbl-lot-nova" className="block text-xs font-semibold text-slate-700 mb-1">Novo Local de Trabalho (Destino) <span className="text-rose-500">*</span></label>
+              <select
+                id="sel-lot-nova"
                 required
-                value={novaLotacao}
-                onChange={(e) => setNovaLotacao(e.target.value)}
+                value={novaLotacaoId}
+                onChange={(e) => setNovaLotacaoId(e.target.value)}
                 className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
-              />
+              >
+                <option value="">-- Selecione o Local de Trabalho --</option>
+                {locaisPorSecretaria.map((grupo) => (
+                  <optgroup key={grupo.secretaria} label={`SECRETARIA DE ${grupo.secretaria}`}>
+                    {grupo.locais.map((l) => (
+                      <option key={l.id} value={l.id}>{l.nome}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              {locaisPorSecretaria.every((g) => g.locais.length === 0) && (
+                <p className="mt-1 text-[10px] text-amber-600 normal-case font-normal">
+                  Nenhum Local de Trabalho cadastrado ainda. Cadastre em "Locais de Trabalho" no menu lateral.
+                </p>
+              )}
             </div>
             <div className="md:col-span-3">
               <label id="lbl-car-atual" className="block text-xs font-semibold text-slate-700 mb-1">Anterior / Cargo Atual</label>
@@ -1013,6 +1176,267 @@ export default function FormulariosMovimentacao({
                 required
                 value={motivoGratificacao}
                 onChange={(e) => setMotivoGratificacao(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        )}
+
+        {activeQuadro === 'permutas' && (
+          <div className="space-y-4">
+            <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4 space-y-3">
+              <h4 className="font-mono text-xs font-bold text-blue-700 tracking-wider">SERVIDOR A (SOLICITANTE)</h4>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Matrícula <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={servidorAMatricula}
+                    onChange={(e) => setServidorAMatricula(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Nome Completo <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={servidorANome}
+                    onChange={(e) => setServidorANome(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Vínculo</label>
+                  <select
+                    value={servidorAVinculo}
+                    onChange={(e) => setServidorAVinculo(e.target.value as VinculoType)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  >
+                    <option value="Efetivo">Efetivo (Concursado)</option>
+                    <option value="Comissionado">Comissionado (Livre Nomeação)</option>
+                    <option value="Contratado">Contratado Temporário (Processo Seletivo)</option>
+                  </select>
+                </div>
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Local de Trabalho Atual <span className="text-rose-500">*</span></label>
+                  <select
+                    required
+                    value={localAId}
+                    onChange={(e) => setLocalAId(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  >
+                    <option value="">-- Selecione --</option>
+                    {locaisPorSecretaria.map((grupo) => (
+                      <optgroup key={grupo.secretaria} label={`SECRETARIA DE ${grupo.secretaria}`}>
+                        {grupo.locais.map((l) => (
+                          <option key={l.id} value={l.id}>{l.nome}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-4 space-y-3">
+              <h4 className="font-mono text-xs font-bold text-emerald-700 tracking-wider">SERVIDOR B (PERMUTANTE)</h4>
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Matrícula <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={servidorBMatricula}
+                    onChange={(e) => setServidorBMatricula(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Nome Completo <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={servidorBNome}
+                    onChange={(e) => setServidorBNome(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Vínculo</label>
+                  <select
+                    value={servidorBVinculo}
+                    onChange={(e) => setServidorBVinculo(e.target.value as VinculoType)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  >
+                    <option value="Efetivo">Efetivo (Concursado)</option>
+                    <option value="Comissionado">Comissionado (Livre Nomeação)</option>
+                    <option value="Contratado">Contratado Temporário (Processo Seletivo)</option>
+                  </select>
+                </div>
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Local de Trabalho Atual <span className="text-rose-500">*</span></label>
+                  <select
+                    required
+                    value={localBId}
+                    onChange={(e) => setLocalBId(e.target.value)}
+                    className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                  >
+                    <option value="">-- Selecione --</option>
+                    {locaisPorSecretaria.map((grupo) => (
+                      <optgroup key={grupo.secretaria} label={`SECRETARIA DE ${grupo.secretaria}`}>
+                        {grupo.locais.map((l) => (
+                          <option key={l.id} value={l.id}>{l.nome}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Data da Solicitação <span className="text-rose-500">*</span></label>
+                <input
+                  type="date"
+                  required
+                  value={dataSolicitacaoPermuta}
+                  onChange={(e) => setDataSolicitacaoPermuta(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Data de Efetivação</label>
+                <input
+                  type="date"
+                  value={dataEfetivacaoPermuta}
+                  onChange={(e) => setDataEfetivacaoPermuta(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Status</label>
+                <select
+                  value={statusPermuta}
+                  onChange={(e) => setStatusPermuta(e.target.value as StatusPermuta)}
+                  className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                >
+                  {LISTA_STATUS_PERMUTA.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Portaria / Autorização</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Portaria GP nº 45/2026"
+                  value={portariaPermuta}
+                  onChange={(e) => setPortariaPermuta(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Motivo da Permuta</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Proximidade de residência, motivos de saúde"
+                  value={motivoPermuta}
+                  onChange={(e) => setMotivoPermuta(e.target.value)}
+                  className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeQuadro === 'frequencias' && (
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Local de Trabalho</label>
+              <select
+                value={localTrabalhoFreqId}
+                onChange={(e) => setLocalTrabalhoFreqId(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              >
+                <option value="">-- Não informado --</option>
+                {locaisDaSecretaria.map((l) => (
+                  <option key={l.id} value={l.id}>{l.nome}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Competência (Mês/Ano) <span className="text-rose-500">*</span></label>
+              <input
+                type="text"
+                placeholder="Ex: 05/2026"
+                required
+                value={competenciaFreq}
+                onChange={(e) => setCompetenciaFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Dias Úteis <span className="text-rose-500">*</span></label>
+              <input
+                type="number"
+                min={0}
+                required
+                value={diasUteisFreq}
+                onChange={(e) => setDiasUteisFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-1">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Dias Trabalhados <span className="text-rose-500">*</span></label>
+              <input
+                type="number"
+                min={0}
+                required
+                value={diasTrabalhadosFreq}
+                onChange={(e) => setDiasTrabalhadosFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Observações</label>
+              <input
+                type="text"
+                placeholder="Ex: Justificativas ou ocorrências do mês"
+                value={observacoesFreq}
+                onChange={(e) => setObservacoesFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Faltas no Mês</label>
+              <input
+                type="number"
+                min={0}
+                value={faltasFreq}
+                onChange={(e) => setFaltasFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Atestados no Mês</label>
+              <input
+                type="number"
+                min={0}
+                value={atestadosFreq}
+                onChange={(e) => setAtestadosFreq(e.target.value)}
+                className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Atrasos no Mês</label>
+              <input
+                type="number"
+                min={0}
+                value={atrasosFreq}
+                onChange={(e) => setAtrasosFreq(e.target.value)}
                 className="w-full text-sm rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-500"
               />
             </div>

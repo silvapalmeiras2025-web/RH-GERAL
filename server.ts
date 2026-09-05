@@ -8,7 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import ExcelJS from 'exceljs';
-import { DatabaseState, RecordType, Secretaria } from './src/types.js';
+import { DatabaseState, LocalTrabalho, RecordType, Secretaria } from './src/types.js';
 
 const app = express();
 const PORT = 3000;
@@ -31,7 +31,10 @@ function initDatabase() {
       lotacoes: [],
       horasExtras: [],
       ajudasCusto: [],
-      gratificacoes: []
+      gratificacoes: [],
+      permutas: [],
+      frequencias: [],
+      locaisTrabalho: []
     };
     fs.writeFileSync(DB_FILE, JSON.stringify(initialState, null, 2), 'utf-8');
     console.log('Database initialized successfully at:', DB_FILE);
@@ -43,7 +46,12 @@ function readDatabase(): DatabaseState {
   try {
     initDatabase();
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Backfill collections introduced after the initial schema, for databases created earlier
+    parsed.permutas = parsed.permutas || [];
+    parsed.frequencias = parsed.frequencias || [];
+    parsed.locaisTrabalho = parsed.locaisTrabalho || [];
+    return parsed;
   } catch (error) {
     console.error('Failed to read database, returning empty state:', error);
     return {
@@ -54,7 +62,10 @@ function readDatabase(): DatabaseState {
       lotacoes: [],
       horasExtras: [],
       ajudasCusto: [],
-      gratificacoes: []
+      gratificacoes: [],
+      permutas: [],
+      frequencias: [],
+      locaisTrabalho: []
     };
   }
 }
@@ -98,17 +109,100 @@ app.get('/api/records', (req, res) => {
   res.json({ db, ruleContext });
 });
 
+// API: List Locais de Trabalho (optionally filtered by secretaria)
+app.get('/api/locais-trabalho', (req, res) => {
+  const db = readDatabase();
+  const secretaria = req.query.secretaria as Secretaria | undefined;
+  const locais = secretaria
+    ? db.locaisTrabalho.filter((l) => l.secretaria === secretaria)
+    : db.locaisTrabalho;
+  res.json(locais);
+});
+
+// API: Create a Local de Trabalho within a Secretaria
+app.post('/api/locais-trabalho', (req, res) => {
+  const { secretaria, nome, endereco, responsavel } = req.body;
+
+  if (!secretaria || !nome || !String(nome).trim()) {
+    res.status(400).json({ error: 'Secretaria e Nome do Local de Trabalho são obrigatórios.' });
+    return;
+  }
+
+  const db = readDatabase();
+
+  const jaExiste = db.locaisTrabalho.some(
+    (l) => l.secretaria === secretaria && l.nome.trim().toLowerCase() === String(nome).trim().toLowerCase()
+  );
+  if (jaExiste) {
+    res.status(409).json({ error: 'Já existe um Local de Trabalho com este nome nesta Secretaria.' });
+    return;
+  }
+
+  const novoLocal: LocalTrabalho = {
+    id: 'loc_' + Math.random().toString(36).substr(2, 9),
+    secretaria,
+    nome: String(nome).trim(),
+    endereco: (endereco || '').trim(),
+    responsavel: (responsavel || '').trim(),
+    ativo: true,
+    timestamp: new Date().toISOString()
+  };
+
+  db.locaisTrabalho.push(novoLocal);
+  writeDatabase(db);
+
+  res.json({ success: true, local: novoLocal });
+});
+
+// API: Update a Local de Trabalho (nome, endereco, responsavel, ativo)
+app.put('/api/locais-trabalho/:id', (req, res) => {
+  const { id } = req.params;
+  const db = readDatabase();
+  const local = db.locaisTrabalho.find((l) => l.id === id);
+
+  if (!local) {
+    res.status(404).json({ error: 'Local de Trabalho não encontrado.' });
+    return;
+  }
+
+  const { nome, endereco, responsavel, ativo } = req.body;
+  if (nome !== undefined) local.nome = String(nome).trim();
+  if (endereco !== undefined) local.endereco = String(endereco).trim();
+  if (responsavel !== undefined) local.responsavel = String(responsavel).trim();
+  if (ativo !== undefined) local.ativo = !!ativo;
+
+  writeDatabase(db);
+  res.json({ success: true, local });
+});
+
+// API: Delete a Local de Trabalho
+app.delete('/api/locais-trabalho/:id', (req, res) => {
+  const { id } = req.params;
+  const db = readDatabase();
+
+  const initialLength = db.locaisTrabalho.length;
+  db.locaisTrabalho = db.locaisTrabalho.filter((l) => l.id !== id);
+
+  if (db.locaisTrabalho.length === initialLength) {
+    res.status(404).json({ error: 'Local de Trabalho não encontrado.' });
+    return;
+  }
+
+  writeDatabase(db);
+  res.json({ success: true, message: 'Local de Trabalho removido com sucesso.' });
+});
+
 // API: Submit a record
 app.post('/api/records/:type', (req, res) => {
   const type = req.params.type as RecordType;
   const newRecord = req.body;
-  
+
   const db = readDatabase();
-  if (!db[type]) {
-    res.status(400).json({ error: `Quadro de movimentação inválido: ${type}` });
+  if (type as string === 'locaisTrabalho' || !db[type]) {
+    res.status(400).json({ error: `Quadro de movimentação inválido: ${type}. Utilize o cadastro de Locais de Trabalho.` });
     return;
   }
-  
+
   const rule = checkPrazoCorte();
   
   // Inject metadata
@@ -167,6 +261,18 @@ const getFormattedDateString = (isoString?: string) => {
   }
 };
 
+// Converts a 1-based column index into its spreadsheet letter (1 -> A, 27 -> AA)
+function getColLetter(colIndex: number): string {
+  let letter = '';
+  let n = colIndex;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
 // HELPER FOR EXCEL CONVERSION (MONETARY VALUES)
 function formatCurrency(val: any): number {
   if (val === undefined || val === null || val === '') return 0;
@@ -207,9 +313,9 @@ app.get('/api/export', async (req, res) => {
     },
     {
       type: 'faltas',
-      name: '3. Faltas e Afast.",',
-      headers: ['Matrícula', 'Nome Completo', 'Vínculo', 'Tipo Ocorrência', 'Data Início', 'Data Término', 'Dias/Horas', 'Motivo/CID', 'Justificado', 'Descontar', 'Registrado em', 'Fora do Prazo?'],
-      keys: ['matricula', 'nomeCompleto', 'vinculo', 'tipoOcorrencia', 'dataInicio', 'dataTermino', 'quantidadeDias', 'motivoCid', 'justificado', 'descontar', 'timestamp', 'foraDoPrazo']
+      name: '3. Afastamentos',
+      headers: ['Matrícula', 'Nome Completo', 'Vínculo', 'Local de Trabalho', 'Tipo Ocorrência', 'Data Início', 'Data Término', 'Dias/Horas', 'Motivo/CID', 'Justificado', 'Descontar', 'Registrado em', 'Fora do Prazo?'],
+      keys: ['matricula', 'nomeCompleto', 'vinculo', 'localTrabalho', 'tipoOcorrencia', 'dataInicio', 'dataTermino', 'quantidadeDias', 'motivoCid', 'justificado', 'descontar', 'timestamp', 'foraDoPrazo']
     },
     {
       type: 'ferias',
@@ -241,6 +347,18 @@ app.get('/api/export', async (req, res) => {
       name: '8. Gratificações',
       headers: ['Matrícula', 'Nome Completo', 'Vínculo', 'Tipo Gratificação', 'Valor ou %', 'Natureza', 'Data Início', 'Base Legal', 'Motivo', 'Registrado em', 'Fora do Prazo?'],
       keys: ['matricula', 'nomeCompleto', 'vinculo', 'tipoGratificacao', 'valorOrPercentual', 'natureza', 'dataInicio', 'baseLegal', 'motivo', 'timestamp', 'foraDoPrazo']
+    },
+    {
+      type: 'permutas',
+      name: '9. Permutas',
+      headers: ['Servidor A', 'Matr. A', 'Local A', 'Servidor B', 'Matr. B', 'Local B', 'Data Solicitação', 'Data Efetivação', 'Status', 'Motivo', 'Portaria', 'Registrado em', 'Fora do Prazo?'],
+      keys: ['servidorANome', 'servidorAMatricula', 'localA', 'servidorBNome', 'servidorBMatricula', 'localB', 'dataSolicitacao', 'dataEfetivacao', 'status', 'motivo', 'portaria', 'timestamp', 'foraDoPrazo']
+    },
+    {
+      type: 'frequencias',
+      name: '10. Freq.',
+      headers: ['Matrícula', 'Nome Completo', 'Vínculo', 'Local de Trabalho', 'Competência', 'Dias Úteis', 'Dias Trabalhados', 'Faltas', 'Atestados', 'Atrasos', 'Observações', 'Registrado em', 'Fora do Prazo?'],
+      keys: ['matricula', 'nomeCompleto', 'vinculo', 'localTrabalho', 'competencia', 'diasUteis', 'diasTrabalhados', 'faltas', 'atestados', 'atrasos', 'observacoes', 'timestamp', 'foraDoPrazo']
     }
   ];
 
@@ -258,8 +376,10 @@ app.get('/api/export', async (req, res) => {
       views: [{ showGridLines: true }]
     });
 
+    const lastColLetter = getColLetter(cfg.headers.length);
+
     // 1. Title Header of Prefeitura
-    ws.mergeCells('A1', 'K1');
+    ws.mergeCells(`A1`, `${lastColLetter}1`);
     const titleCell1 = ws.getCell('A1');
     titleCell1.value = 'PREFEITURA MUNICIPAL DE ROSÁRIO - MA';
     titleCell1.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -272,15 +392,15 @@ app.get('/api/export', async (req, res) => {
     ws.getRow(1).height = 36;
 
     // Subtitle
-    ws.mergeCells('A2', 'K2');
+    ws.mergeCells(`A2`, `${lastColLetter}2`);
     const titleCell2 = ws.getCell('A2');
-    titleCell2.value = `SISTEMA DE ALIMENTAÇÃO DE MOVIMENTAÇÃO DE PESSOAL — DECRETO Nº 409/2026`;
+    titleCell2.value = `SISTEMA DE GESTÃO DE PESSOAL — LOTAÇÃO, AFASTAMENTOS, PERMUTAS E FREQUÊNCIA`;
     titleCell2.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF334155' } };
     titleCell2.alignment = { vertical: 'middle', horizontal: 'center' };
     ws.getRow(2).height = 20;
 
     // Details info about Quadro and Secretary
-    ws.mergeCells('A3', 'K3');
+    ws.mergeCells(`A3`, `${lastColLetter}3`);
     const titleCell3 = ws.getCell('A3');
     titleCell3.value = `QUADRO REGULAMENTAR: ${cfg.name.toUpperCase()}  |  SECRETARIA: ${targetSecretaria || 'TODAS AS SECRETARIAS REUNIDAS'}`;
     titleCell3.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF475569' } };
@@ -288,7 +408,7 @@ app.get('/api/export', async (req, res) => {
     ws.getRow(3).height = 20;
 
     // Date/Subtitle parameters
-    ws.mergeCells('A4', 'K4');
+    ws.mergeCells(`A4`, `${lastColLetter}4`);
     const titleCell4 = ws.getCell('A4');
     titleCell4.value = `Relatório gerado em: ${new Date().toLocaleString('pt-BR')}  -  Prazo de Corte Mensal: Dia 10`;
     titleCell4.font = { name: 'Arial', size: 8, italic: true, color: { argb: 'FF64748B' } };
@@ -398,7 +518,7 @@ app.get('/api/export', async (req, res) => {
     if (records.length === 0) {
       const r = ws.getRow(currentRowIdx);
       r.height = 28;
-      ws.mergeCells(`A${currentRowIdx}`, `K${currentRowIdx}`);
+      ws.mergeCells(`A${currentRowIdx}`, `${lastColLetter}${currentRowIdx}`);
       const emptyCell = r.getCell(1);
       emptyCell.value = 'Nenhum registro inserido para este lote de movimentações de pessoal no período.';
       emptyCell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -408,9 +528,9 @@ app.get('/api/export', async (req, res) => {
         pattern: 'solid',
         fgColor: { argb: 'FFFBFBFE' }
       };
-      
+
       // Fine outer border
-      for (let col = 1; col <= 11; col++) {
+      for (let col = 1; col <= cfg.headers.length; col++) {
         r.getCell(col).border = {
           top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
           bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -505,6 +625,74 @@ app.get('/api/export', async (req, res) => {
       col.width = Math.max(maxLen + 4, 12); // minimum width is 12 columns
     });
   });
+
+  // Extra sheet: Cadastro de Locais de Trabalho por Secretaria
+  {
+    let locais = db.locaisTrabalho || [];
+    if (targetSecretaria) {
+      locais = locais.filter((l) => l.secretaria === targetSecretaria);
+    }
+
+    const wsLocais = workbook.addWorksheet('Locais de Trabalho', { views: [{ showGridLines: true }] });
+    const headers = ['Secretaria', 'Nome do Local de Trabalho', 'Endereço', 'Responsável', 'Situação', 'Cadastrado em'];
+
+    wsLocais.mergeCells('A1', 'F1');
+    const titleLocais = wsLocais.getCell('A1');
+    titleLocais.value = 'CADASTRO DE LOCAIS DE TRABALHO';
+    titleLocais.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleLocais.alignment = { vertical: 'middle', horizontal: 'center' };
+    titleLocais.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    wsLocais.getRow(1).height = 32;
+
+    const headerRow = wsLocais.getRow(3);
+    headerRow.height = 24;
+    headers.forEach((h, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = h;
+      cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+    });
+
+    let rowIdx = 4;
+    locais.forEach((local, idx) => {
+      const r = wsLocais.getRow(rowIdx);
+      const values = [
+        local.secretaria,
+        local.nome,
+        local.endereco || '-',
+        local.responsavel || '-',
+        local.ativo ? 'ATIVO' : 'INATIVO',
+        getFormattedDateString(local.timestamp)
+      ];
+      values.forEach((v, colIdx) => {
+        const cell = r.getCell(colIdx + 1);
+        cell.value = v;
+        cell.font = { name: 'Arial', size: 9 };
+        cell.alignment = { vertical: 'middle', horizontal: colIdx === 1 ? 'left' : 'center' };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC' } };
+      });
+      rowIdx++;
+    });
+
+    if (locais.length === 0) {
+      wsLocais.mergeCells(`A${rowIdx}`, `F${rowIdx}`);
+      const emptyCell = wsLocais.getCell(`A${rowIdx}`);
+      emptyCell.value = 'Nenhum Local de Trabalho cadastrado.';
+      emptyCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF94A3B8' } };
+      emptyCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    }
+
+    headers.forEach((h, colIdx) => {
+      let maxLen = h.length;
+      locais.forEach((local) => {
+        const vals = [local.secretaria, local.nome, local.endereco, local.responsavel];
+        const len = (vals[colIdx] || '').length;
+        if (len > maxLen) maxLen = len;
+      });
+      wsLocais.getColumn(colIdx + 1).width = Math.max(maxLen + 4, 14);
+    });
+  }
 
   // Export and send
   const tempFileName = `Fechamento_Lote_${targetSecretaria || 'CONSOLIDADO'}_Decreto409.xlsx`;

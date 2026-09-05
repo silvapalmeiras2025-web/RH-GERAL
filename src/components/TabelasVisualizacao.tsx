@@ -36,7 +36,8 @@ export default function TabelasVisualizacao({
       const nameMatch = (rec.nomeCompleto || '').toLowerCase().includes(term);
       const matriculaMatch = (rec.matricula || '').toLowerCase().includes(term);
       const cpfMatch = (rec.cpf || '').toLowerCase().includes(term);
-      return nameMatch || matriculaMatch || cpfMatch;
+      const servidorBMatch = (rec.servidorBNome || '').toLowerCase().includes(term) || (rec.servidorBMatricula || '').toLowerCase().includes(term);
+      return nameMatch || matriculaMatch || cpfMatch || servidorBMatch;
     }
     return true;
   });
@@ -89,6 +90,16 @@ export default function TabelasVisualizacao({
     return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
+  // Determina se um afastamento ainda está em curso com base na data de término informada
+  const getStatusAfastamento = (dataTermino?: string) => {
+    if (!dataTermino) return { label: 'EM ABERTO', tone: 'amber' as const };
+    const termino = new Date(dataTermino + 'T23:59:59');
+    if (isNaN(termino.getTime())) return { label: 'EM ABERTO', tone: 'amber' as const };
+    return termino.getTime() < Date.now()
+      ? { label: 'ENCERRADO', tone: 'slate' as const }
+      : { label: 'EM ANDAMENTO', tone: 'blue' as const };
+  };
+
   // Headings config
   const getHeaders = () => {
     switch (activeQuadro) {
@@ -97,7 +108,7 @@ export default function TabelasVisualizacao({
       case 'demissoes':
         return ['Matrícula', 'Servidor', 'Vínculo', 'Cargo', 'Desligamento', 'Motivo / Causa', 'Portaria', 'Envio'];
       case 'faltas':
-        return ['Matrícula', 'Servidor', 'Ocorrência', 'Período', 'Dias', 'CID / Motivo', 'Abono / Desconto', 'Envio'];
+        return ['Matrícula', 'Servidor', 'Local de Trabalho', 'Ocorrência', 'Período', 'Dias', 'Status', 'CID / Motivo', 'Abono / Desconto', 'Envio'];
       case 'ferias':
         return ['Matrícula', 'Servidor', 'P. Aquisitivo', 'Período Gozo', 'Dias', 'Abono / 13º', 'Envio'];
       case 'lotacoes':
@@ -108,6 +119,10 @@ export default function TabelasVisualizacao({
         return ['Matrícula', 'Servidor', 'Tipo', 'Valor', 'Mês Ref.', 'Forma Pagamento', 'Finalidade', 'Ref. PA'];
       case 'gratificacoes':
         return ['Matrícula', 'Servidor', 'Gratificação', 'Valor / %', 'Natureza', 'Data Início', 'Suporte Legal', 'Envio'];
+      case 'permutas':
+        return ['Servidor A', 'Local A', 'Servidor B', 'Local B', 'Solicitação', 'Efetivação', 'Status', 'Portaria', 'Envio'];
+      case 'frequencias':
+        return ['Matrícula', 'Servidor', 'Local de Trabalho', 'Competência', 'Dias Úteis', 'Trabalhados', 'Faltas/Atestados/Atrasos', '% Frequência', 'Envio'];
       default:
         return [];
     }
@@ -212,29 +227,41 @@ export default function TabelasVisualizacao({
                       </>
                     )}
 
-                    {activeQuadro === 'faltas' && (
-                      <>
-                        <td className="px-4 py-3 font-mono font-medium text-slate-900 border-r border-slate-100">{rec.matricula}</td>
-                        <td className="px-4 py-3 border-r border-slate-100">
-                          <div className="font-semibold text-slate-900">{rec.nomeCompleto}</div>
-                          <div className="text-[10px] text-slate-400">{rec.vinculo}</div>
-                        </td>
-                        <td className="px-4 py-3 border-r border-slate-100">
-                          <span className="inline-flex rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 border border-amber-100">{rec.tipoOcorrencia}</span>
-                        </td>
-                        <td className="px-4 py-3 border-r border-slate-100 text-slate-600">
-                          {formatDate(rec.dataInicio)} {rec.dataTermino && `até ${formatDate(rec.dataTermino)}`}
-                        </td>
-                        <td className="px-4 py-3 border-r border-slate-100 font-bold text-slate-900">{rec.quantidadeDias} dias</td>
-                        <td className="px-4 py-3 border-r border-slate-100 font-mono text-slate-500">{rec.motivoCid || '-'}</td>
-                        <td className="px-4 py-3 border-r border-slate-100">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px]">Justificado: <strong className={rec.justificado ? 'text-emerald-700' : 'text-slate-500'}>{rec.justificado ? 'SIM' : 'NÃO'}</strong></span>
-                            <span className="text-[10px]">Descontar: <strong className={rec.descontar ? 'text-rose-700' : 'text-slate-500'}>{rec.descontar ? 'SIM' : 'NÃO'}</strong></span>
-                          </div>
-                        </td>
-                      </>
-                    )}
+                    {activeQuadro === 'faltas' && (() => {
+                      const status = getStatusAfastamento(rec.dataTermino);
+                      const toneClasses = status.tone === 'blue'
+                        ? 'bg-blue-50 text-blue-700 border-blue-150'
+                        : status.tone === 'slate'
+                        ? 'bg-slate-100 text-slate-600 border-slate-200'
+                        : 'bg-amber-50 text-amber-800 border-amber-150';
+                      return (
+                        <>
+                          <td className="px-4 py-3 font-mono font-medium text-slate-900 border-r border-slate-100">{rec.matricula}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <div className="font-semibold text-slate-900">{rec.nomeCompleto}</div>
+                            <div className="text-[10px] text-slate-400">{rec.vinculo}</div>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{rec.localTrabalho || '-'}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <span className="inline-flex rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 border border-amber-100">{rec.tipoOcorrencia}</span>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-slate-600">
+                            {formatDate(rec.dataInicio)} {rec.dataTermino && `até ${formatDate(rec.dataTermino)}`}
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 font-bold text-slate-900">{rec.quantidadeDias} dias</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold border ${toneClasses}`}>{status.label}</span>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 font-mono text-slate-500">{rec.motivoCid || '-'}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px]">Justificado: <strong className={rec.justificado ? 'text-emerald-700' : 'text-slate-500'}>{rec.justificado ? 'SIM' : 'NÃO'}</strong></span>
+                              <span className="text-[10px]">Descontar: <strong className={rec.descontar ? 'text-rose-700' : 'text-slate-500'}>{rec.descontar ? 'SIM' : 'NÃO'}</strong></span>
+                            </div>
+                          </td>
+                        </>
+                      );
+                    })()}
 
                     {activeQuadro === 'ferias' && (
                       <>
@@ -335,6 +362,57 @@ export default function TabelasVisualizacao({
                         <td className="px-4 py-3 border-r border-slate-100 text-slate-500 font-mono">{rec.baseLegal}</td>
                       </>
                     )}
+
+                    {activeQuadro === 'permutas' && (() => {
+                      const statusTone: Record<string, string> = {
+                        Solicitada: 'bg-amber-50 text-amber-800 border-amber-150',
+                        Aprovada: 'bg-blue-50 text-blue-700 border-blue-150',
+                        Efetivada: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                        Negada: 'bg-rose-50 text-rose-700 border-rose-150'
+                      };
+                      return (
+                        <>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <div className="font-semibold text-slate-900">{rec.servidorANome}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{rec.servidorAMatricula} · {rec.servidorAVinculo}</div>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{rec.localA}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <div className="font-semibold text-slate-900">{rec.servidorBNome}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{rec.servidorBMatricula} · {rec.servidorBVinculo}</div>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{rec.localB}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">{formatDate(rec.dataSolicitacao)}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">{rec.dataEfetivacao ? formatDate(rec.dataEfetivacao) : '-'}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <span className={`inline-flex rounded-md px-2 py-0.5 text-[10px] font-bold border ${statusTone[rec.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>{rec.status}</span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-slate-500 border-r border-slate-100">{rec.portaria || '-'}</td>
+                        </>
+                      );
+                    })()}
+
+                    {activeQuadro === 'frequencias' && (() => {
+                      const pct = rec.diasUteis > 0 ? Math.round((rec.diasTrabalhados / rec.diasUteis) * 1000) / 10 : 0;
+                      const pctTone = pct >= 95 ? 'text-emerald-700' : pct >= 85 ? 'text-amber-700' : 'text-rose-700';
+                      return (
+                        <>
+                          <td className="px-4 py-3 font-mono font-medium text-slate-900 border-r border-slate-100">{rec.matricula}</td>
+                          <td className="px-4 py-3 border-r border-slate-100">
+                            <div className="font-semibold text-slate-900">{rec.nomeCompleto}</div>
+                            <div className="text-[10px] text-slate-400">{rec.vinculo}</div>
+                          </td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{rec.localTrabalho || '-'}</td>
+                          <td className="px-4 py-3 font-mono border-r border-slate-100 text-center">{rec.competencia}</td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-center">{rec.diasUteis}</td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-center font-bold text-slate-900">{rec.diasTrabalhados}</td>
+                          <td className="px-4 py-3 border-r border-slate-100 text-center font-mono text-slate-600">
+                            {rec.faltas}F / {rec.atestados}A / {rec.atrasos}At
+                          </td>
+                          <td className={`px-4 py-3 border-r border-slate-100 text-center font-bold ${pctTone}`}>{pct}%</td>
+                        </>
+                      );
+                    })()}
 
                     {/* Metadata indicators */}
                     <td className="px-4 py-3 border-r border-slate-100 whitespace-nowrap text-slate-500">
