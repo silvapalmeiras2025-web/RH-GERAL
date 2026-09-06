@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { DatabaseState, LISTA_SECRETARIAS, QUADROS_LIST, RecordType, Secretaria } from './types';
 import FormulariosMovimentacao from './components/FormulariosMovimentacao';
 import TabelasVisualizacao from './components/TabelasVisualizacao';
+import CadastroLocaisTrabalho from './components/CadastroLocaisTrabalho';
 
 export default function App() {
   const [db, setDb] = useState<DatabaseState>({
@@ -17,7 +18,10 @@ export default function App() {
     lotacoes: [],
     horasExtras: [],
     ajudasCusto: [],
-    gratificacoes: []
+    gratificacoes: [],
+    permutas: [],
+    frequencias: [],
+    locaisTrabalho: []
   });
 
   // Mandatory Selected Secretary (restricts insertion and triggers localized views)
@@ -26,8 +30,11 @@ export default function App() {
     return (saved && LISTA_SECRETARIAS.includes(saved as Secretaria)) ? (saved as Secretaria) : '';
   });
 
-  // Selected Active Form Tab (Quadro 1 to 8)
+  // Selected Active Form Tab (Quadro 1 to 10)
   const [activeQuadro, setActiveQuadro] = useState<RecordType>('admissoes');
+
+  // Alterna entre a tela de movimentações (quadros) e o cadastro estrutural de Locais de Trabalho
+  const [viewMode, setViewMode] = useState<'quadros' | 'locais'>('quadros');
 
   // Mobile sidebar drawer state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -173,10 +180,33 @@ export default function App() {
           </div>
         </div>
 
+        {/* Cadastro estrutural: Locais de Trabalho */}
+        <div className="px-3 pt-4">
+          <div className="px-2 pb-1.5 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Cadastro Estrutural</div>
+          <button
+            onClick={() => {
+              setViewMode('locais');
+              setIsSidebarOpen(false);
+            }}
+            className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-2 text-xs transition-colors cursor-pointer ${
+              viewMode === 'locais'
+                ? 'bg-blue-600/90 text-white font-bold'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800/40 border border-slate-800'
+            }`}
+          >
+            <svg className="size-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Locais de Trabalho
+          </button>
+        </div>
+
         {/* Quadro navigation list */}
-        <nav id="nav-quadros" className="flex-1 py-4 overflow-y-auto space-y-0.5">
+        <div className="px-5 pt-5 pb-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Movimentações de Pessoal</div>
+        <nav id="nav-quadros" className="flex-1 py-1 overflow-y-auto space-y-0.5">
           {QUADROS_LIST.map((quadro, idx) => {
-            const isActive = activeQuadro === quadro.id;
+            const isActive = viewMode === 'quadros' && activeQuadro === quadro.id;
             const count = getCountForQuadro(quadro.id);
 
             return (
@@ -184,6 +214,7 @@ export default function App() {
                 key={quadro.id}
                 onClick={() => {
                   setActiveQuadro(quadro.id);
+                  setViewMode('quadros');
                   setIsSidebarOpen(false);
                 }}
                 className={`w-full text-left px-5 py-2.5 flex items-center justify-between text-xs transition-colors cursor-pointer border-l-3 ${
@@ -388,9 +419,9 @@ export default function App() {
             </div>
           )}
 
-          {/* Form module container in high density arrangement */}
-          <div className="bg-white rounded-lg border border-slate-200 shadow-xs p-4 sm:p-5">
-            {!selectedSec ? (
+          {/* Placeholder comum quando nenhuma secretaria foi selecionada */}
+          {!selectedSec && (
+            <div className="bg-white rounded-lg border border-slate-200 shadow-xs p-4 sm:p-5">
               <div className="rounded-lg border border-dashed border-slate-250 p-10 text-center max-w-lg mx-auto my-4 bg-slate-50/50">
                 <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-blue-50 text-blue-600 mb-3.5 ring-6 ring-blue-50/20">
                   <svg className="size-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -399,7 +430,7 @@ export default function App() {
                 </div>
                 <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Inserções Bloqueadas</h3>
                 <p className="mt-2 text-[11px] text-slate-505 leading-relaxed">
-                  Para registrar movimentações de servidores conforme os termos do Decreto Municipal Correto, você deve primeiro <strong>selecionar o departamento responsável</strong> no menu do cabeçalho superior.
+                  Para registrar movimentações de servidores ou gerenciar Locais de Trabalho, você deve primeiro <strong>selecionar o departamento responsável</strong> no menu do cabeçalho superior.
                 </p>
                 <div className="mt-4 flex justify-center">
                   <svg className="animate-bounce size-4.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
@@ -407,18 +438,37 @@ export default function App() {
                   </svg>
                 </div>
               </div>
-            ) : (
+            </div>
+          )}
+
+          {/* Cadastro de Locais de Trabalho */}
+          {selectedSec && viewMode === 'locais' && (
+            <div className="bg-white rounded-lg border border-slate-200 shadow-xs p-4 sm:p-5">
+              <CadastroLocaisTrabalho
+                secretaria={selectedSec}
+                locais={db.locaisTrabalho}
+                onChanged={(message) => handleInsertSuccess(message, null)}
+                onError={handleInsertError}
+              />
+            </div>
+          )}
+
+          {/* Form module container in high density arrangement */}
+          {selectedSec && viewMode === 'quadros' && (
+            <div className="bg-white rounded-lg border border-slate-200 shadow-xs p-4 sm:p-5">
               <FormulariosMovimentacao
                 secretaria={selectedSec}
                 activeQuadro={activeQuadro}
                 isForaDoPrazo={ruleContext.isForaDoPrazo}
+                locaisTrabalho={db.locaisTrabalho}
                 onSuccess={handleInsertSuccess}
                 onError={handleInsertError}
               />
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Grid rows history layout list */}
+          {selectedSec && viewMode === 'quadros' && (
           <div className="bg-white rounded-lg border border-slate-200 shadow-xs p-4 sm:p-5 space-y-3.5">
             <div className="border-b border-slate-100 pb-3">
               <h3 className="font-sans text-sm font-bold text-slate-800 leading-tight uppercase tracking-wide">
@@ -446,6 +496,7 @@ export default function App() {
               />
             )}
           </div>
+          )}
 
           {/* Legislative reference footnotes */}
           <section className="bg-slate-100 p-4 border border-slate-200 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px] text-slate-500 leading-relaxed">
